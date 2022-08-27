@@ -46,7 +46,8 @@
       </p>
       <div>
         <RoundedGoldLoadingButton
-          buttonText="Play Again"
+                buttonText="Play Again"
+                disabled="false"
           style="font-size: 24px; font-weight: bold; margin-bottom: 20px"
         />
         <div>

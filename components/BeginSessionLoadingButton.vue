@@ -11,12 +11,11 @@
     <b-button
       class="rounded-button-cyan subheading4"
       ref="button"
-      :key="rebuildbutton"
       :disabled="busy"
       @click="
         // callback($event);
         onClick();
-        navigateToQuiz();
+        activateTeamQuiz();
       "
       style="width: 260px"
     >
@@ -28,18 +27,18 @@
 <script>
 import { mapState, mapActions } from "vuex";
 import ls from "localstorage-slim";
+import axios from "axios";
 export default {
   data() {
     return {
-      busy: (this.disabled === 'true') ? true : false,
+      busy: this.disabled === "true" ? true : false,
       loading: false,
       timeout: null,
       show: false,
-      rebuildbutton: 0,
       isSunday: false,
       mswaliUserId: this.$store.state.mswaliId,
       disabledUser: this.$store.state.canNotify,
-      istournamentLive: null,
+      teadID: this.$store.state.userDetails.tournament.data.roles.team_id,
     };
   },
   props: {
@@ -48,16 +47,12 @@ export default {
     showloading: String,
     disabled: String,
   },
-  mounted() { 
+  mounted() {
     if (this.showIcon == "true") {
       this.show = true;
     } else {
       this.show = false;
     }
-    // setTimeout(
-    //     () => this.istournamentLive === 0 && (this.forceRerender()),
-    //     5000,
-    //   );
   },
   beforeDestroy() {
     this.clearTimeout();
@@ -79,25 +74,6 @@ export default {
       persistSessionDetails: "persistSessionDetails",
       persistTriviaQuestions: "persistTriviaQuestions",
     }),
-    // forceRerender() {
-    //   this.rebuildbutton += 1;
-    //   this.disabled = 'true';
-    //   this.buttonText = 'Session is live: Play Now & Win';
-    //   console.log('is game live', this.istournamentLive)
-    //   console.log(this.buttonText)
-    //   console.log('<------RELOAD BUTTON------>')
-    // },
-    async getTournamentDetails() {
-      // fetch tournament details
-      let tournamentDetails = await axios.get(
-        `/apiproxy/tournament-play/get-tournament-session&user_id=${this.mswaliUserId}`,
-      );
-      await this.persisttournamentDetails(tournamentDetails);
-      this.istournamentLive =
-        this.$store.state.userDetails.tournament.data.data.game_on;
-      console.log(this.istournamentLive);
-      console.log("Live or NOT");
-    },
     clearTimeout() {
       if (this.timeout) {
         clearTimeout(this.timeout);
@@ -121,7 +97,7 @@ export default {
       // Simulate an async request
       this.setTimeout(() => {
         this.busy = false;
-      this.loading = true;
+        this.loading = true;
       });
     },
     callback: function (e) {
@@ -129,6 +105,14 @@ export default {
     },
     showIconFunc() {
       this.showIcon == "true" ? (this.show = true) : (this.show = false);
+    },
+    async activateTeamQuiz() {
+      const res = await axios.post(
+        `/apiproxy/tournament-play/activate-quiz&user_id=${this.mswaliUserId}&team_id=${this.teadID}`,
+      );
+      await this.$store.dispatch("delayFiveSeconds");
+      await this.successToast();
+      // window.location.reload();
     },
     async fetchWalletBalance() {
       try {
@@ -202,6 +186,14 @@ export default {
       this.$bvToast.toast(`Please wait as, game starts in a few seconds`, {
         title: `Game starting shortly`,
         variant: "info",
+        toaster: toaster,
+        solid: true,
+      });
+    },
+    successToast(toaster) {
+      this.$bvToast.toast(`You have started the quiz successfully!`, {
+        title: `Game Activated Successfully`,
+        variant: "success",
         toaster: toaster,
         solid: true,
       });
@@ -293,11 +285,60 @@ export default {
                 this.isSunday = false;
             }
             // step 2 check if the game session is live for user to play
-            if (isSessionLive) {
-              // step 3 serve questions
-              await this.fetchSessionQuestions(sessionID);
+            if (isSessionLive || this.isSunday) {
+              // step 3 check if rate is > 0 or = 0
+              if (gameRate > 0) {
+                // step 4 check if user has active subscriptions
+                let checkplanurl = `api/check-plan-status&user_id=${mswaliUserId}`;
+                let userSubscriptionStatus = await this.$axios.get(
+                  `/apiproxy/${checkplanurl}`,
+                );
+                let getbalanceproxy = `api/get-balance&user_id=${mswaliUserId}`;
+                let userWalletBalance = await this.$axios.get(
+                  `/apiproxy/${getbalanceproxy}`,
+                );
+                let creditsbalance = await Math.trunc(
+                  userWalletBalance.data.credit_balance,
+                );
+                // step 5 play with credits logic starts here
+                if (creditsbalance > 0) {
+                  // subtract a credit from user balance
+                  let playwithcreditsurl = `api/play-with-credit&user_id=${mswaliUserId}`;
+                  let creditDeduct = await this.$axios.post(
+                    `/apiproxy/${playwithcreditsurl}`,
+                  );
+                  if (
+                    creditDeduct.data.message == "credit redeemed successfully"
+                  ) {
+                    // if user has credits serve the questions and deduct a credit
+                    await this.fetchSessionQuestions(sessionID);
+                    await this.persistUserCredits(
+                      parseInt(this.$store.state.userCredits) - 1,
+                    );
+                    // finish loading
+                    await this.$router.push("/quiz");
+                    // save questions to serve in quiz page
+                  } else {
+                    this.problemPlayingWithCreditToast();
+                  }
+                } else {
+                  // step 6 if user has an active subscription serve the questions
+                  if (userSubscriptionStatus.data) {
+                    await this.fetchSessionQuestions(sessionID);
+                    await this.fetchWalletBalance();
+                    await this.deductGameSession();
+                    // deduct a session from the user
+                  } else {
+                    this.noActiveSubscriptionToast();
+                    await this.$store.dispatch("delayFiveSeconds");
+                    this.$router.push("/buy-subscription");
+                  }
+                }
+              } else if (gameRate == 0) {
+                await this.fetchSessionQuestions(sessionID);
                 // stop loading
                 await this.$router.push("/quiz");
+              }
             } else {
               // stop loading
               this.sessionIsNotLiveToast();
