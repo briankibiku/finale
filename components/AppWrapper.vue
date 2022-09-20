@@ -151,7 +151,7 @@ export default {
       }
     },
     navigateToLogin() {
-      return this.$router.push("/login");
+      return this.$router.push("/email-login");
     },
     async daySalutatuins() {
       var d = new Date();
